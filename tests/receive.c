@@ -33,6 +33,7 @@
 #include <limits.h>
 #include <errno.h>
 #include <signal.h>
+#include <sys/time.h>
 #include "librelp.h"
 
 #define TRY(f) { const int TRY_r = f; if(TRY_r != RELP_RET_OK) { \
@@ -68,7 +69,7 @@ doSleep(int iSeconds, const int iuSeconds)
 }
 
 static void
-hdlr_enable(int sig, void (*hdlr)())
+hdlr_enable(int sig, void (*hdlr)(const int))
 {
 	struct sigaction sigAct;
 	memset(&sigAct, 0, sizeof (sigAct));

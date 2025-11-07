@@ -1,6 +1,6 @@
 /* This implements the relp mapping onto TCP.
  *
- * Copyright 2008-2018 by Rainer Gerhards and Adiscon GmbH.
+ * Copyright 2008-2025 by Rainer Gerhards and Adiscon GmbH.
  *
  * This file is part of librelp.
  *
@@ -69,7 +69,6 @@
 #	if OPENSSL_VERSION_NUMBER >= 0x30000000L && !defined(LIBRESSL_VERSION_NUMBER)
 #		include <openssl/bioerr.h>
 #	endif
-#	include <openssl/engine.h>
 /* OpenSSL API differences */
 #	if OPENSSL_VERSION_NUMBER >= 0x10100000L
 #		define RSYSLOG_X509_NAME_oneline(X509CERT) X509_get_subject_name(X509CERT)
@@ -77,6 +76,7 @@
 #		define RSYSLOG_BIO_number_read(SSLBIO) BIO_number_read(SSLBIO)
 #		define RSYSLOG_BIO_number_written(SSLBIO) BIO_number_written(SSLBIO)
 #	else
+#		include <openssl/engine.h>
 #		define RSYSLOG_X509_NAME_oneline(X509CERT) (X509CERT != NULL ? X509CERT->cert_info->subject : NULL)
 #		define RSYSLOG_BIO_method_name(SSLBIO) SSLBIO->method->name
 #		define RSYSLOG_BIO_number_read(SSLBIO) SSLBIO->num
@@ -819,6 +819,7 @@ relpTcpDestruct(relpTcp_t **ppThis)
 
 		free(pThis->pRemHostIP);
 		free(pThis->pRemHostName);
+		free(pThis->pRemHostPort);
 		free(pThis->pristring);
 		free(pThis->caCertFile);
 		free(pThis->ownCertFile);
@@ -923,6 +924,7 @@ relpTcpSetRemHost(relpTcp_t *const pThis, struct sockaddr *pAddr)
 	int error;
 	unsigned char szIP[NI_MAXHOST] = "";
 	unsigned char szHname[NI_MAXHOST+64] = ""; /* 64 extra bytes for message text */
+	unsigned char szPort[NI_MAXSERV] = "";
 	struct addrinfo hints, *res;
 	size_t len;
 
@@ -931,11 +933,12 @@ relpTcpSetRemHost(relpTcp_t *const pThis, struct sockaddr *pAddr)
 	pEngine = pThis->pEngine;
 	assert(pAddr != NULL);
 
-	error = getnameinfo(pAddr, SALEN(pAddr), (char*)szIP, sizeof(szIP), NULL, 0, NI_NUMERICHOST);
-	if(error) {
+	if((error = getnameinfo(pAddr, SALEN(pAddr), (char*)szIP, sizeof(szIP), (char*)szPort,
+	            sizeof(szPort), NI_NUMERICHOST | NI_NUMERICSERV)) != 0) {
 		pThis->pEngine->dbgprint((char*)"Malformed from address %s\n", gai_strerror(error));
 		strcpy((char*)szHname, "???");
 		strcpy((char*)szIP, "???");
+		strcpy((char*)szPort, "???");
 		ABORT_FINALIZE(RELP_RET_INVALID_HNAME);
 	}
 
@@ -980,6 +983,16 @@ relpTcpSetRemHost(relpTcp_t *const pThis, struct sockaddr *pAddr)
 		ABORT_FINALIZE(RELP_RET_OUT_OF_MEMORY);
 	}
 	memcpy(pThis->pRemHostName, szHname, len);
+
+	len = strlen((char*)szPort) + 1; /* +1 for \0 byte */
+	if((pThis->pRemHostPort = malloc(len)) == NULL) {
+		free(pThis->pRemHostIP);
+		free(pThis->pRemHostName);
+		pThis->pRemHostIP = NULL;
+		pThis->pRemHostName = NULL;
+		ABORT_FINALIZE(RELP_RET_OUT_OF_MEMORY);
+	}
+	memcpy(pThis->pRemHostPort, szPort, len);
 
 finalize_it:
 	LEAVE_RELPFUNC;
@@ -1989,7 +2002,9 @@ relpTcpExitTLS_ossl(void)
 			SSL_CTX_free(ctx);
 			ctx = NULL;
 		}
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 		ENGINE_cleanup();
+#endif
 		ERR_free_strings();
 		EVP_cleanup();
 		CRYPTO_cleanup_all_ex_data();
